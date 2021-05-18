@@ -1,5 +1,7 @@
 import { fromEnv } from "@aws-sdk/credential-provider-env";
 import { fromContainerMetadata, fromInstanceMetadata } from "@aws-sdk/credential-provider-imds";
+import { fromProcess } from "@aws-sdk/credential-provider-process";
+import { fromSSO } from "@aws-sdk/credential-provider-sso";
 import { fromTokenFile } from "@aws-sdk/credential-provider-web-identity";
 import { ENV_CONFIG_PATH, ENV_CREDENTIALS_PATH } from "@aws-sdk/shared-ini-file-loader";
 import { Credentials } from "@aws-sdk/types";
@@ -59,6 +61,10 @@ jest.mock("@aws-sdk/credential-provider-web-identity");
 jest.mock("@aws-sdk/credential-provider-imds");
 
 jest.mock("@aws-sdk/credential-provider-env");
+
+jest.mock("@aws-sdk/credential-provider-process");
+
+jest.mock("@aws-sdk/credential-provider-sso");
 
 const DEFAULT_CREDS = {
   accessKeyId: "AKIAIOSFODNN7EXAMPLE",
@@ -985,6 +991,82 @@ role_arn = ${roleArn}`.trim()
         roleArn,
         roleAssumerWithWebIdentity,
       });
+    });
+  });
+
+  describe("assume role with credential process", () => {
+    it("should call fromProcess with assume role chaining", async () => {
+      (fromProcess as jest.Mock).mockReturnValueOnce(() => Promise.resolve(DEFAULT_CREDS));
+      const credentialProcess = "test/process";
+
+      const fooRoleArn = "arn:aws:iam::123456789:role/foo";
+      const fooSessionName = "fooSession";
+      __addMatcher(
+        join(homedir(), ".aws", "credentials"),
+        `
+[bar]
+credential_process = ${credentialProcess}
+
+[foo]
+role_arn = ${fooRoleArn}
+role_session_name = ${fooSessionName}
+source_profile = bar`.trim()
+      );
+
+      const provider = fromIni({
+        profile: "foo",
+        roleAssumer(sourceCreds: Credentials, params: AssumeRoleParams): Promise<Credentials> {
+          expect(sourceCreds).toEqual(DEFAULT_CREDS);
+          expect(params.RoleArn).toEqual(fooRoleArn);
+          expect(params.RoleSessionName).toEqual(fooSessionName);
+          return Promise.resolve(FOO_CREDS);
+        },
+      });
+
+      expect(await provider()).toEqual(FOO_CREDS);
+      expect(fromProcess).toHaveBeenCalledTimes(1);
+      expect(fromProcess).toHaveBeenCalledWith({ profile: "bar" });
+    });
+  });
+
+  describe("assume role with SSO", () => {
+    it("should call fromSSO with assume role chaining", async () => {
+      (fromSSO as jest.Mock).mockReturnValueOnce(() => Promise.resolve(DEFAULT_CREDS));
+      const startUrl = "https:some-url/start";
+      const accountId = "1234567890";
+      const region = "us-foo-1";
+      const roleName = "some-role";
+
+      const fooRoleArn = "arn:aws:iam::123456789:role/foo";
+      const fooSessionName = "fooSession";
+      __addMatcher(
+        join(homedir(), ".aws", "credentials"),
+        `
+[bar]
+sso_start_url = ${startUrl}
+sso_account_id = ${accountId}
+sso_region = ${region}
+sso_role_name = ${roleName}
+
+[foo]
+role_arn = ${fooRoleArn}
+role_session_name = ${fooSessionName}
+source_profile = bar`.trim()
+      );
+
+      const provider = fromIni({
+        profile: "foo",
+        roleAssumer(sourceCreds: Credentials, params: AssumeRoleParams): Promise<Credentials> {
+          expect(sourceCreds).toEqual(DEFAULT_CREDS);
+          expect(params.RoleArn).toEqual(fooRoleArn);
+          expect(params.RoleSessionName).toEqual(fooSessionName);
+          return Promise.resolve(FOO_CREDS);
+        },
+      });
+
+      expect(await provider()).toEqual(FOO_CREDS);
+      expect(fromSSO).toHaveBeenCalledTimes(1);
+      expect(fromSSO).toHaveBeenCalledWith({ profile: "bar" });
     });
   });
 
