@@ -1,5 +1,7 @@
 import { fromEnv } from "@aws-sdk/credential-provider-env";
 import { fromContainerMetadata, fromInstanceMetadata } from "@aws-sdk/credential-provider-imds";
+import { fromProcess } from "@aws-sdk/credential-provider-process";
+import { fromSSO } from "@aws-sdk/credential-provider-sso";
 import { AssumeRoleWithWebIdentityParams, fromTokenFile } from "@aws-sdk/credential-provider-web-identity";
 import { ProviderError } from "@aws-sdk/property-provider";
 import {
@@ -142,6 +144,28 @@ const isAssumeRoleWithSourceProfile = (arg: any): arg is AssumeRoleWithSourcePro
 const isAssumeRoleWithProviderProfile = (arg: any): arg is AssumeRoleWithProviderProfile =>
   isAssumeRoleProfile(arg) && typeof arg.credential_source === "string" && typeof arg.source_profile === "undefined";
 
+interface CredentialProcessProfile extends Profile {
+  credential_process: string;
+}
+
+const isCredentialProcessProfile = (arg: any): arg is CredentialProcessProfile =>
+  Boolean(arg) && typeof arg === "object" && typeof arg.credential_process === "string";
+
+interface SSOProfile extends Profile {
+  sso_start_url: string;
+  sso_account_id: string;
+  sso_region: string;
+  sso_role_name: string;
+}
+
+const isSSOProfile = (arg: any): arg is SSOProfile =>
+  Boolean(arg) &&
+  typeof arg === "object" &&
+  typeof arg.sso_start_url === "string" &&
+  typeof arg.sso_account_id === "string" &&
+  typeof arg.sso_region === "string" &&
+  typeof arg.sso_role_name === "string";
+
 /**
  * Creates a credential provider that will read from ini files and supports
  * role assumption and multi-factor authentication.
@@ -250,6 +274,16 @@ const resolveProfileData = async (
     return resolveWebIdentityCredentials(data, options);
   }
 
+  // Use credential_process if available
+  if (isCredentialProcessProfile(data)) {
+    return await resolveProcessCredentials(profileName);
+  }
+
+  // Use SSO if available
+  if (isSSOProfile(data)) {
+    return await resolveSSOCredentials(profileName);
+  }
+
   // If the profile cannot be parsed or contains neither static credentials
   // nor role assumption metadata, throw an error. This should be considered a
   // terminal resolution error if a profile has been specified by the user
@@ -294,4 +328,14 @@ const resolveWebIdentityCredentials = async (profile: WebIdentityProfile, option
     roleArn: profile.role_arn,
     roleSessionName: profile.role_session_name,
     roleAssumerWithWebIdentity: options.roleAssumerWithWebIdentity,
+  })();
+
+const resolveProcessCredentials = async (name: string): Promise<Credentials> =>
+  fromProcess({
+    profile: name,
+  })();
+
+const resolveSSOCredentials = async (name: string): Promise<Credentials> =>
+  fromSSO({
+    profile: name,
   })();
